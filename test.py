@@ -8,6 +8,7 @@ import readchar
 import random
 import time
 import threading
+import msvcrt
 
 
 console = Console()
@@ -190,10 +191,9 @@ def make_game_screen(
     question_number,
     factor,
     multiplier,
-    5.0,
     time_remaining,
     player_answer
-    )
+):
 
     game_panel = make_panel(
         question_number,
@@ -246,37 +246,10 @@ def play():
 
         stop_timer = threading.Event()
 
-        player_answer = None
+        player_answer = ""
 
 
-        # ----------------------------------------------------
-        # INPUT THREAD
-        # ----------------------------------------------------
 
-        def get_input():
-
-            nonlocal player_answer
-
-            player_answer = ""
-
-            while True:
-
-                key = readchar.readkey()
-
-                if key == readchar.key.ENTER:
-
-                    print(f"\nDEBUG: player_answer = {player_answer!r}")
-
-                    answer_received.set()
-                    break
-
-                elif key == readchar.key.BACKSPACE:
-
-                    player_answer = player_answer[:-1]
-
-                elif key.isdigit():
-
-                    player_answer += key
         # ----------------------------------------
         # TIMER THREAD
         # ----------------------------------------------------
@@ -301,14 +274,13 @@ def play():
                             question_number,
                             factor,
                             multiplier,
-                            0,
+                            time_remaining,
                             player_answer
                         ),
                         refresh=True
                     )
 
                     time_up.set()
-
                     break
 
                 live.update(
@@ -316,7 +288,8 @@ def play():
                         question_number,
                         factor,
                         multiplier,
-                        time_remaining
+                        time_remaining,
+                        player_answer
                     ),
                     refresh=True
                 )
@@ -335,7 +308,8 @@ def play():
                     question_number,
                     factor,
                     multiplier,
-                    5.0
+                    5.0,
+                    player_answer
                 ),
                 console=console,
                 refresh_per_second=20
@@ -349,17 +323,11 @@ def play():
             )
 
 
-            # Create input thread
-            input_thread = threading.Thread(
-                target=get_input,
-                daemon=True
-            )
 
 
             # Start both
             timer_thread.start()
 
-            input_thread.start()
 
 
             # ------------------------------------------------
@@ -370,17 +338,28 @@ def play():
 
                 # Timer won
                 if time_up.is_set():
-
                     break
 
+                # Check keyboard
+                if msvcrt.kbhit():
 
-                # Player won
-                if answer_received.is_set():
-                    stop_timer.set()
-                    break
+                    key = readchar.readkey()
 
+                    if key == readchar.key.ENTER:
 
-                time.sleep(0.05)
+                        answer_received.set()
+                        stop_timer.set()
+                        break
+
+                    elif key == readchar.key.BACKSPACE:
+
+                        player_answer = player_answer[:-1]
+
+                    elif key.isdigit():
+
+                        player_answer += key
+
+                time.sleep(0.01)
             timer_thread.join()
 
 
@@ -445,9 +424,6 @@ def play():
 
             question_number += 1
 
-            console.input(
-                "\n[dim]Press ENTER for the next question...[/dim]"
-            )
 
 
         # ====================================================
