@@ -1,8 +1,9 @@
-from rich.console import Console
+from rich.console import Console, Group
 from rich.table import Table
 from rich.panel import Panel
 from rich.align import Align
 from rich.live import Live
+import readchar
 
 import random
 import time
@@ -10,7 +11,7 @@ import threading
 
 
 console = Console()
-
+TIME_LIMIT = 5.0
 
 # ============================================================
 # BANNER
@@ -21,12 +22,12 @@ def banner():
     console.clear()
 
     title = r"""
-     █████╗ ██████╗ ██╗████████╗██╗  ██╗ ██████╗ ███╗   ███╗ █████╗ ███╗   ██╗ ██████╗███████╗╚██████╗
-    ██╔══██╗██╔══██╗██║╚══██╔══╝██║  ██║██╔═══██╗████╗ ████║██╔══██╗████╗  ██║██╔════╝██╔════╝  ██╔══╝
-    ███████║██████╔╝██║   ██║   ███████║██║   ██║██╔████╔██║███████║██╔██╗ ██║██║     █████╗    ██║
-    ██╔══██║██╔══██╗██║   ██║   ██╔══██║██║   ██║██║╚██╔╝██║██╔══██║██║╚██╗██║██║     ██╔══╝    ██║
-    ██║  ██║██║  ██║██║   ██║   ██║  ██║╚██████╔╝██║ ╚═╝ ██║██║  ██║██║ ╚████║╚██████╗███████╗   ██║
-    ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝   ╚═╝
+     █████╗ ██████╗ ██╗████████╗██╗  ██╗ ██████╗ ███╗   ███╗ █████╗ ███╗╗  ██╗  ██████╗███████╗███████╗
+    ██╔══██╗██╔══██╗██║╚══██╔══╝██║  ██║██╔═══██╗████╗ ████║██╔══██╗████╗  ██║║██╔════╝██╔════╝██╔══██╗
+    ███████║██████╔╝██║   ██║   ███████║██║   ██║██╔████╔██║███████║██╔██╗ ██║║██║     █████╗  ██████╔╝
+    ██╔══██║██╔══██╗██║   ██║   ██╔══██║██║   ██║██║╚██╔╝██║██╔══██║██║╚██╗██║║██║     ██╔══╝  ██╔══██╗
+    ██║  ██║██║  ██║██║   ██║   ██║  ██║╚██████╔╝██║ ╚═╝ ██║██║  ██║██║ ╚████║║╚██████╗███████╗██║  ██║
+    ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═══╝ ╚═════╝╚══════╝╚═╝
     """
 
     console.print(
@@ -185,6 +186,36 @@ def make_panel(
         padding=(2, 8)
     )
 
+def make_game_screen(
+    question_number,
+    factor,
+    multiplier,
+    5.0,
+    time_remaining,
+    player_answer
+    )
+
+    game_panel = make_panel(
+        question_number,
+        factor,
+        multiplier,
+        time_remaining
+    )
+
+    input_panel = Panel(
+        Align.left(
+            f"[bold cyan]Your answer › [/bold cyan]"
+            f"[bold white]{player_answer}█[/bold white]"
+        ),
+        border_style="cyan",
+        expand=False,
+        width=40
+    )
+
+    return Group(
+        game_panel,
+        input_panel
+    )
 
 # ============================================================
 # PLAY
@@ -213,6 +244,8 @@ def play():
 
         answer_received = threading.Event()
 
+        stop_timer = threading.Event()
+
         player_answer = None
 
 
@@ -224,14 +257,27 @@ def play():
 
             nonlocal player_answer
 
-            player_answer = console.input(
-                "\n[bold cyan]Your answer › [/bold cyan]"
-            )
+            player_answer = ""
 
-            answer_received.set()
+            while True:
 
+                key = readchar.readkey()
 
-        # ----------------------------------------------------
+                if key == readchar.key.ENTER:
+
+                    print(f"\nDEBUG: player_answer = {player_answer!r}")
+
+                    answer_received.set()
+                    break
+
+                elif key == readchar.key.BACKSPACE:
+
+                    player_answer = player_answer[:-1]
+
+                elif key.isdigit():
+
+                    player_answer += key
+        # ----------------------------------------
         # TIMER THREAD
         # ----------------------------------------------------
 
@@ -241,24 +287,22 @@ def play():
 
             while True:
 
-                elapsed = (
-                    time.monotonic()
-                    -
-                    start_time
-                )
+                # Has the player answered?
+                if stop_timer.is_set():
+                    break
+
+                elapsed = time.monotonic() - start_time
 
                 time_remaining = 5.0 - elapsed
 
-
-                # Time expired
                 if time_remaining <= 0:
-
                     live.update(
-                        make_panel(
+                        make_game_screen(
                             question_number,
                             factor,
                             multiplier,
-                            0
+                            0,
+                            player_answer
                         ),
                         refresh=True
                     )
@@ -267,10 +311,8 @@ def play():
 
                     break
 
-
-                # Update timer display
                 live.update(
-                    make_panel(
+                    make_game_screen(
                         question_number,
                         factor,
                         multiplier,
@@ -289,14 +331,14 @@ def play():
         console.clear()
 
         with Live(
-            make_panel(
-                question_number,
-                factor,
-                multiplier,
-                5.0
-            ),
-            console=console,
-            refresh_per_second=20
+                make_game_screen(
+                    question_number,
+                    factor,
+                    multiplier,
+                    5.0
+                ),
+                console=console,
+                refresh_per_second=20
         ) as live:
 
 
@@ -334,11 +376,12 @@ def play():
 
                 # Player won
                 if answer_received.is_set():
-
+                    stop_timer.set()
                     break
 
 
                 time.sleep(0.05)
+            timer_thread.join()
 
 
         # ====================================================
