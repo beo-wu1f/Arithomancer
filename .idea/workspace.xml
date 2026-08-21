@@ -4,8 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="345dc768-cf9a-4061-9c5b-459aacd9b1a7" name="Changes" comment="major commit 2">
+    <list default="true" id="345dc768-cf9a-4061-9c5b-459aacd9b1a7" name="Changes" comment="another major commit, last I promise">
+      <change afterPath="$PROJECT_DIR$/database.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/database_test.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/keytest.py" beforeDir="false" afterPath="$PROJECT_DIR$/keytest.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/test.py" beforeDir="false" afterPath="$PROJECT_DIR$/test.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -34,6 +37,8 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "Python.database_test.executor": "Run",
+    "Python.keytest.executor": "Run",
     "Python.test.executor": "Run",
     "Python.test1.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
@@ -89,7 +94,15 @@
       <option name="project" value="LOCAL" />
       <updated>1787251216323</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="another major commit, last I promise">
+      <option name="closed" value="true" />
+      <created>1787257961163</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1787257961163</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -108,6 +121,23 @@
     <MESSAGE value="2nd commit" />
     <MESSAGE value="major commit" />
     <MESSAGE value="major commit 2" />
-    <option name="LAST_COMMIT_MESSAGE" value="major commit 2" />
+    <MESSAGE value="another major commit, last I promise" />
+    <option name="LAST_COMMIT_MESSAGE" value="another major commit, last I promise" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/test.py</url>
+          <line>681</line>
+          <option name="timeStamp" value="9" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/test.py</url>
+          <line>522</line>
+          <option name="timeStamp" value="10" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
   </component>
 </project>

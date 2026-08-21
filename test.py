@@ -4,19 +4,25 @@ from rich.panel import Panel
 from rich.align import Align
 from rich.live import Live
 import readchar
-
+from database import (
+    save_score,
+    get_high_scores,
+    reset_high_scores
+)
 import random
 import time
 import threading
 import msvcrt
+import sqlite3
 
+DATABASE = "arithomancer.db"
 
-console = Console()
 TIME_LIMIT = 5.0
 
 # ============================================================
 # BANNER
 # ============================================================
+console = Console()
 
 def banner():
 
@@ -31,11 +37,15 @@ def banner():
     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═══╝ ╚═════╝╚══════╝╚═╝
     """
 
+    subtitle = r"""
+             ≋≋≋  ~~~  THE ROGUE-LIKE MULTIPLICATION GAME  ~~~  ≋≋≋
+    """
+
     console.print(
         Panel(
             Align.center(
                 f"[bold cyan]{title}[/bold cyan]\n"
-                "[bold yellow]THE ROGUE-LIKE MULTIPLICATION GAME[/bold yellow]"
+                f"[bold yellow]{subtitle}[/bold yellow]"
             ),
             border_style="bright_blue",
             padding=(1, 2),
@@ -43,6 +53,1034 @@ def banner():
         )
     )
 
+def game_rules():
+
+    console.clear()
+
+    rules = (
+        "[bold yellow]HOW TO PLAY[/bold yellow]\n\n"
+        "• Solve the multiplication problem shown on screen.\n\n"
+        "• Type your answer using the number keys.\n\n"
+        "• Press ENTER to submit your answer.\n\n"
+        "• You begin with 5 seconds.\n\n"
+        "• Correct answer → +1 second for the next question.\n\n"
+        "• Wrong answer → GAME OVER.\n\n"
+        "• Time runs out → GAME OVER.\n\n"
+        "• Your score is the number of questions you survive."
+    )
+
+    rules.add_row(
+        "[bold red]☠ BOSS[/bold red]",
+        "Every 30 questions, face a Boss with 3 questions."
+    )
+
+    rules.add_row(
+        "[bold yellow]⚔ BOSS RULE[/bold yellow]",
+        "Answer each separately and press SPACE to lock it. All 3 must be correct."
+    )
+
+    rules.add_row(
+        "[bold cyan]✦ REWARD[/bold cyan]",
+        "Defeat the Boss: +20 seconds and +1 Arcana."
+    )
+    console.print(
+        Panel(
+            Align.center(
+                rules +
+                "\n\n"
+                "[bold cyan]⚔  GOOD LUCK  ⚔[/bold cyan]"
+            ),
+            title="[bold cyan]GAME RULES[/bold cyan]",
+            border_style="bright_blue",
+            expand=False,
+            padding=(2, 6)
+        )
+    )
+
+    console.input(
+        "\n[bold yellow]Press ENTER to start...[/bold yellow]"
+    )
+
+# ============================================================
+# ITEM INVENTORY
+# ============================================================
+
+ITEMS = {
+    "chrono_salve": {
+        "name": "Chrono-Salve",
+        "description": "+10 seconds when time expires",
+        "quantity": 0
+    },
+
+    "survival_sigil": {
+        "name": "Survival Sigil",
+        "description": "Survive one wrong answer",
+        "quantity": 0
+    },
+
+    "momentum_rune": {
+        "name": "Momentum Rune",
+        "description": "+0.5 seconds for each correct answer",
+        "quantity": 0
+    }
+}
+
+# ============================================================
+# META CURRENCY
+# ============================================================
+
+ARCANA = 10
+
+# ============================================================
+# PERMANENT SHOP UPGRADES
+# ============================================================
+
+SHOP_ITEMS = {
+
+    "runic_potion": {
+        "name": "Runic Potion",
+        "description": "Begin every run with 2 Chrono-Salves.",
+        "cost": 3,
+        "owned": False
+    },
+
+    "soul_shard": {
+        "name": "Soul Shard",
+        "description": "Begin every run with 2 Survival Sigils.",
+        "cost": 3,
+        "owned": False
+    },
+
+    "tempo_crystal": {
+        "name": "Tempo Crystal",
+        "description": "Begin every run with 2 Momentum Runes.",
+        "cost": 3,
+        "owned": False
+    }
+}
+
+# ============================================================
+# BUY SHOP ITEM
+# ============================================================
+
+def buy_shop_item(item_key):
+
+    global ARCANA
+
+    item = SHOP_ITEMS[item_key]
+
+    console.clear()
+
+    # --------------------------------------------------------
+    # ALREADY OWNED
+    # --------------------------------------------------------
+
+    if item["owned"]:
+
+        console.print(
+            Panel(
+                Align.center(
+                    "[bold yellow]✦ ALREADY OWNED ✦[/bold yellow]\n\n"
+                    f"[bold white]{item['name']}[/bold white]\n\n"
+                    "[dim]This permanent enhancement is already yours.[/dim]\n"
+                    "[dim]It cannot be purchased again.[/dim]"
+                ),
+                border_style="yellow",
+                expand=False,
+                padding=(2, 6)
+            )
+        )
+
+        console.input(
+            "\n[dim]Press ENTER to return to the shop...[/dim]"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # NOT ENOUGH ARCANA
+    # --------------------------------------------------------
+
+    if ARCANA < item["cost"]:
+
+        console.print(
+            Panel(
+                Align.center(
+                    "[bold red]✦ INSUFFICIENT ARCANA ✦[/bold red]\n\n"
+                    f"[bold white]{item['name']}[/bold white]\n\n"
+                    f"Cost: [bold cyan]{item['cost']} ✦[/bold cyan]\n"
+                    f"You have: [bold yellow]{ARCANA} ✦[/bold yellow]\n\n"
+                    "[dim]You need more Arcana.[/dim]"
+                ),
+                border_style="red",
+                expand=False,
+                padding=(2, 6)
+            )
+        )
+
+        console.input(
+            "\n[dim]Press ENTER to return to the shop...[/dim]"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # PURCHASE CONFIRMATION
+    # --------------------------------------------------------
+
+    console.print(
+        Panel(
+            Align.center(
+                f"[bold yellow]PURCHASE {item['name']}?[/bold yellow]\n\n"
+                f"{item['description']}\n\n"
+                f"Cost: [bold cyan]{item['cost']} ✦[/bold cyan]\n"
+                f"Arcana remaining after purchase: "
+                f"[bold yellow]{ARCANA - item['cost']} ✦[/bold yellow]"
+            ),
+            border_style="cyan",
+            expand=False,
+            padding=(2, 6)
+        )
+    )
+
+    confirm = console.input(
+        "\n[bold yellow]Purchase this artifact? (Y/N) › [/bold yellow]"
+    ).strip().upper()
+
+    if confirm != "Y":
+
+        console.print(
+            "\n[dim]Purchase cancelled.[/dim]"
+        )
+
+        time.sleep(0.7)
+
+        return
+
+    # --------------------------------------------------------
+    # COMPLETE PURCHASE
+    # --------------------------------------------------------
+
+    ARCANA -= item["cost"]
+
+    item["owned"] = True
+
+    console.print(
+        Panel(
+            Align.center(
+                "[bold green]✦ ARTIFACT ACQUIRED ✦[/bold green]\n\n"
+                f"[bold white]{item['name']}[/bold white]\n\n"
+                f"{item['description']}\n\n"
+                f"Arcana remaining: "
+                f"[bold yellow]{ARCANA} ✦[/bold yellow]"
+            ),
+            border_style="green",
+            expand=False,
+            padding=(2, 6)
+        )
+    )
+
+    console.input(
+        "\n[dim]Press ENTER to return to the shop...[/dim]"
+    )
+
+# ============================================================
+# ARCANE SHOP
+# ============================================================
+
+def shop():
+
+    while True:
+
+        console.clear()
+
+        # ====================================================
+        # SHOP HEADER
+        # ====================================================
+
+        title = r"""
+              · · ─────── ·𖥸· ─────── · ·
+             A R C A N E   E M P O R I U M
+              · · ─────── ·𖥸· ─────── · · 
+        """
+
+        subtitle = (
+            "[dim italic]Where power is forged, "
+            "and every gift carries a price.[/dim italic]"
+        )
+
+        console.print(
+            Panel(
+                Align.center(
+                    f"[bold cyan]{title}[/bold cyan]\n"
+                    f"{subtitle}"
+                ),
+                border_style="bright_blue",
+                expand=False,
+                padding=(1, 5)
+            )
+        )
+
+        # ====================================================
+        # ARCANA DISPLAY
+        # ====================================================
+
+        console.print(
+            Align.center(
+                "\n[bold yellow]✦  ARCANA  ✦[/bold yellow]\n"
+                f"[bold white]{ARCANA}[/bold white]"
+            )
+        )
+
+        console.print()
+
+        # ====================================================
+        # SHOP ITEMS
+        # ====================================================
+
+        shop_table = Table(
+            box=None,
+            show_header=False,
+            padding=(1, 3),
+            expand=False
+        )
+
+        shop_table.add_column(
+            "Key",
+            style="bold yellow",
+            justify="center",
+            width=5
+        )
+
+        shop_table.add_column(
+            "Artifact",
+            style="bold white",
+            width=25
+        )
+
+        shop_table.add_column(
+            "Description",
+            style="dim white",
+            width=42
+        )
+
+        shop_table.add_column(
+            "Price",
+            justify="center",
+            width=12
+        )
+
+        # ----------------------------------------------------
+        # RUNIC POTION
+        # ----------------------------------------------------
+
+        if SHOP_ITEMS["runic_potion"]["owned"]:
+
+            runic_artifact = (
+                "[dim]⏳  Runic Potion[/dim]"
+            )
+
+            runic_description = (
+                "[dim]Already claimed.\n"
+                "This artifact is permanently yours.[/dim]"
+            )
+
+            runic_price = "[dim]SOLD[/dim]"
+
+        else:
+
+            runic_artifact = (
+                "[bold cyan]⏳  Runic Potion[/bold cyan]"
+            )
+
+            runic_description = (
+                "Begin every run with\n"
+                "[cyan]2 Chrono-Salves[/cyan]"
+            )
+
+            runic_price = "[bold yellow]✦ 3[/bold yellow]"
+
+        shop_table.add_row(
+            "[1]",
+            runic_artifact,
+            runic_description,
+            runic_price
+        )
+
+        # ----------------------------------------------------
+        # SOUL SHARD
+        # ----------------------------------------------------
+
+        if SHOP_ITEMS["soul_shard"]["owned"]:
+
+            soul_artifact = (
+                "[dim]🔮  Soul Shard[/dim]"
+            )
+
+            soul_description = (
+                "[dim]Already claimed.\n"
+                "This artifact is permanently yours.[/dim]"
+            )
+
+            soul_price = "[dim]SOLD[/dim]"
+
+        else:
+
+            soul_artifact = (
+                "[bold purple]🔮  Soul Shard[/bold purple]"
+            )
+
+            soul_description = (
+                "Begin every run with\n"
+                "[purple]2 Survival Sigils[/purple]"
+            )
+
+            soul_price = "[bold yellow]✦ 3[/bold yellow]"
+
+        shop_table.add_row(
+            "[2]",
+            soul_artifact,
+            soul_description,
+            soul_price
+        )
+
+        # ----------------------------------------------------
+        # TEMPO CRYSTAL
+        # ----------------------------------------------------
+
+        if SHOP_ITEMS["tempo_crystal"]["owned"]:
+
+            tempo_artifact = (
+                "[dim]⚡  Tempo Crystal[/dim]"
+            )
+
+            tempo_description = (
+                "[dim]Already claimed.\n"
+                "This artifact is permanently yours.[/dim]"
+            )
+
+            tempo_price = "[dim]SOLD[/dim]"
+
+        else:
+
+            tempo_artifact = (
+                "[bold yellow]⚡  Tempo Crystal[/bold yellow]"
+            )
+
+            tempo_description = (
+                "Begin every run with\n"
+                "[yellow]2 Momentum Runes[/yellow]"
+            )
+
+            tempo_price = "[bold yellow]✦ 3[/bold yellow]"
+
+        shop_table.add_row(
+            "[3]",
+            tempo_artifact,
+            tempo_description,
+            tempo_price
+        )
+
+        # ====================================================
+        # SHOP FRAME
+        # ====================================================
+
+        console.print(
+            Panel(
+                Align.center(shop_table),
+                border_style="cyan",
+                expand=False,
+                padding=(1, 2)
+            )
+        )
+
+        # ====================================================
+        # FOOTER
+        # ====================================================
+
+        console.print(
+            Align.center(
+                "\n[bold yellow][1][/bold yellow] "
+                "Purchase    "
+                "[bold yellow][2][/bold yellow] "
+                "Purchase    "
+                "[bold yellow][3][/bold yellow] "
+                "Purchase    "
+                "[bold yellow][4][/bold yellow] "
+                "Return"
+            )
+        )
+
+        choice = console.input(
+            "\n[bold cyan]Choose your artifact › [/bold cyan]"
+        ).strip()
+
+        # ====================================================
+        # RETURN
+        # ====================================================
+
+        if choice == "4":
+
+            return
+
+        # ====================================================
+        # PURCHASE
+        # ====================================================
+
+        elif choice == "1":
+
+            buy_shop_item("runic_potion")
+
+        elif choice == "2":
+
+            buy_shop_item("soul_shard")
+
+        elif choice == "3":
+
+            buy_shop_item("tempo_crystal")
+
+        else:
+
+            console.print(
+                "\n[bold red]✗ The Emporium recognizes only 1, 2, 3, or 4.[/bold red]"
+            )
+
+            time.sleep(1)
+
+# ============================================================
+# BOSS BATTLE
+# ============================================================
+
+def boss_battle(time_limit):
+
+    global ARCANA
+
+    # --------------------------------------------------------
+    # GENERATE 3 QUESTIONS
+    # --------------------------------------------------------
+
+    boss_questions = []
+
+    for _ in range(3):
+
+        factor, multiplier, correct_answer = generate_question(30)
+
+        boss_questions.append({
+            "factor": factor,
+            "multiplier": multiplier,
+            "answer": correct_answer,
+            "input": "",
+            "locked": False
+        })
+
+    # --------------------------------------------------------
+    # BOSS TIMER
+    # --------------------------------------------------------
+
+    start_time = time.monotonic()
+
+    # --------------------------------------------------------
+    # CURRENT QUESTION
+    # --------------------------------------------------------
+
+    current_question = 0
+
+    # --------------------------------------------------------
+    # DRAW BOSS SCREEN
+    # --------------------------------------------------------
+
+    def draw_boss():
+
+        elapsed = time.monotonic() - start_time
+
+        remaining = max(
+            0,
+            time_limit - elapsed
+        )
+
+        # ====================================================
+        # QUESTION TABLE
+        # ====================================================
+
+        boss_table = Table(
+            box=None,
+            show_header=False,
+            padding=(1, 3),
+            expand=False
+        )
+
+        boss_table.add_column(
+            "STATUS",
+            justify="center",
+            width=8
+        )
+
+        boss_table.add_column(
+            "QUESTION",
+            justify="center",
+            width=15
+        )
+
+        boss_table.add_column(
+            "ANSWER",
+            justify="center",
+            width=18
+        )
+
+        for index, question in enumerate(
+            boss_questions
+        ):
+
+            # ----------------------------------------------
+            # CURRENT QUESTION
+            # ----------------------------------------------
+
+            if index == current_question:
+
+                status = "[bold yellow]▶[/bold yellow]"
+
+            # ----------------------------------------------
+            # ALREADY SOLVED
+            # ----------------------------------------------
+
+            elif question["locked"]:
+
+                status = "[bold green]✓[/bold green]"
+
+            # ----------------------------------------------
+            # NOT YET REACHED
+            # ----------------------------------------------
+
+            else:
+
+                status = "[dim]○[/dim]"
+
+            # ----------------------------------------------
+            # ANSWER DISPLAY
+            # ----------------------------------------------
+
+            if question["locked"]:
+
+                answer_display = (
+                    f"[bold green]"
+                    f"{question['input']}"
+                    f" ✓"
+                    f"[/bold green]"
+                )
+
+            elif index == current_question:
+
+                answer_display = (
+                    f"[bold cyan]"
+                    f"{question['input']}"
+                    f"█"
+                    f"[/bold cyan]"
+                )
+
+            else:
+
+                answer_display = "[dim]—[/dim]"
+
+            boss_table.add_row(
+                status,
+                (
+                    f"[bold white]"
+                    f"{question['factor']} × "
+                    f"{question['multiplier']}"
+                    f"[/bold white]"
+                ),
+                answer_display
+            )
+
+        # ====================================================
+        # TIMER BAR
+        # ====================================================
+
+        bar_length = 36
+
+        if time_limit > 0:
+
+            filled = int(
+                bar_length *
+                remaining /
+                time_limit
+            )
+
+        else:
+
+            filled = 0
+
+        filled = max(
+            0,
+            min(
+                bar_length,
+                filled
+            )
+        )
+
+        timer_bar = (
+            "█" * filled
+            +
+            "░" * (bar_length - filled)
+        )
+
+        # ====================================================
+        # ITEMS
+        # ====================================================
+
+        item_lines = []
+
+        if ITEMS["chrono_salve"]["quantity"] > 0:
+
+            item_lines.append(
+                f"[cyan]⏳ Chrono-Salve ×"
+                f"{ITEMS['chrono_salve']['quantity']}[/cyan]"
+            )
+
+        if ITEMS["survival_sigil"]["quantity"] > 0:
+
+            item_lines.append(
+                f"[magenta]🔮 Survival Sigil ×"
+                f"{ITEMS['survival_sigil']['quantity']}[/magenta]"
+            )
+
+        if ITEMS["momentum_rune"]["quantity"] > 0:
+
+            item_lines.append(
+                f"[yellow]⚡ Momentum Rune ×"
+                f"{ITEMS['momentum_rune']['quantity']}[/yellow]"
+            )
+
+        items_text = "   ".join(item_lines)
+
+        # ====================================================
+        # SCREEN
+        # ====================================================
+
+        content = (
+            "[bold red]☠  B O S S   B A T T L E  ☠[/bold red]\n\n"
+
+            "[bold yellow]"
+            "Solve all three equations."
+            "[/bold yellow]\n"
+
+            "[dim]"
+            "Type each answer separately and press SPACE to lock it."
+            "[/dim]\n\n"
+
+            f"{boss_table}\n\n"
+
+            "[bold yellow]TIME REMAINING[/bold yellow]\n"
+
+            f"[bold cyan]{timer_bar}[/bold cyan]\n"
+
+            f"[bold white]{remaining:.1f}s[/bold white]"
+        )
+
+        if items_text:
+
+            content += (
+                f"\n\n{items_text}"
+            )
+
+        return Panel(
+            Align.center(content),
+            border_style="red",
+            expand=False,
+            padding=(2, 5)
+        ), remaining
+
+    # ========================================================
+    # BOSS LOOP
+    # ========================================================
+
+    while True:
+
+        # ----------------------------------------------------
+        # TIMER CHECK
+        # ----------------------------------------------------
+
+        screen, remaining = draw_boss()
+
+        console.clear()
+
+        console.print(
+            screen
+        )
+
+        # ----------------------------------------------------
+        # TIME UP
+        # ----------------------------------------------------
+
+        if remaining <= 0:
+
+            # ================================================
+            # CHRONO-SALVE
+            # ================================================
+
+            if ITEMS["chrono_salve"]["quantity"] > 0:
+
+                ITEMS["chrono_salve"]["quantity"] -= 1
+
+                console.print(
+                    Panel(
+                        Align.center(
+                            "[bold cyan]"
+                            "⏳ CHRONO-SALVE ACTIVATED!"
+                            "[/bold cyan]\n\n"
+
+                            "[bold white]"
+                            "+10 seconds"
+                            "[/bold white]\n\n"
+
+                            f"Chrono-Salves remaining: "
+                            f"[bold cyan]"
+                            f"{ITEMS['chrono_salve']['quantity']}"
+                            f"[/bold cyan]"
+                        ),
+                        border_style="cyan",
+                        expand=False,
+                        padding=(2, 6)
+                    )
+                )
+
+                # --------------------------------------------
+                # ADD TIME
+                # --------------------------------------------
+
+                time_limit += 10
+
+                # Restart timer from current moment.
+                start_time = time.monotonic()
+
+                time.sleep(1)
+
+                continue
+
+            # ================================================
+            # GAME OVER
+            # ================================================
+
+            console.print(
+                Panel(
+                    Align.center(
+                        "[bold red]"
+                        "☠ BOSS BATTLE FAILED ☠"
+                        "[/bold red]\n\n"
+
+                        "[white]"
+                        "Time ran out."
+                        "[/white]"
+                    ),
+                    border_style="red",
+                    expand=False,
+                    padding=(2, 6)
+                )
+            )
+
+            return False
+
+        # ====================================================
+        # ALL THREE SOLVED
+        # ====================================================
+
+        if current_question >= 3:
+
+            # -----------------------------------------------
+            # BOSS DEFEATED
+            # -----------------------------------------------
+
+            ARCANA += 1
+
+            time_limit += 20
+
+            console.clear()
+
+            console.print(
+                Panel(
+                    Align.center(
+                        "[bold green]"
+                        "⚔  B O S S   D E F E A T E D  ⚔"
+                        "[/bold green]\n\n"
+
+                        "[bold yellow]"
+                        "✦ +20 seconds"
+                        "[/bold yellow]\n"
+
+                        "[bold cyan]"
+                        "✦ +1 Arcana"
+                        "[/bold cyan]\n\n"
+
+                        f"[dim]"
+                        f"Arcana: {ARCANA}"
+                        f"[/dim]"
+                    ),
+                    border_style="green",
+                    expand=False,
+                    padding=(2, 8)
+                )
+            )
+
+            time.sleep(1.5)
+
+            return True
+
+        # ====================================================
+        # READ KEY
+        # ====================================================
+
+        key = readchar.readkey()
+
+        # ====================================================
+        # NUMBER
+        # ====================================================
+
+        if key.isdigit():
+
+            # -----------------------------------------------
+            # ONLY CURRENT QUESTION ACCEPTS INPUT
+            # -----------------------------------------------
+
+            boss_questions[current_question]["input"] += key
+
+        # ====================================================
+        # BACKSPACE
+        # ====================================================
+
+        elif key == readchar.key.BACKSPACE:
+
+            boss_questions[current_question]["input"] = (
+                boss_questions[current_question]["input"][:-1]
+            )
+
+        # ====================================================
+        # SPACE = LOCK ANSWER
+        # ====================================================
+
+        elif key == " ":
+
+            answer_text = (
+                boss_questions[current_question]["input"]
+            )
+
+            # ------------------------------------------------
+            # BLANK ANSWER
+            # ------------------------------------------------
+
+            if answer_text == "":
+
+                continue
+
+            # ------------------------------------------------
+            # CHECK ANSWER
+            # ------------------------------------------------
+
+            try:
+
+                player_answer = int(
+                    answer_text
+                )
+
+            except ValueError:
+
+                continue
+
+            correct_answer = (
+                boss_questions[current_question]["answer"]
+            )
+
+            # =================================================
+            # CORRECT
+            # =================================================
+
+            if player_answer == correct_answer:
+
+                boss_questions[current_question]["locked"] = True
+
+                current_question += 1
+
+                continue
+
+            # =================================================
+            # WRONG
+            # =================================================
+
+            else:
+
+                # --------------------------------------------
+                # SURVIVAL SIGIL
+                # --------------------------------------------
+
+                if ITEMS["survival_sigil"]["quantity"] > 0:
+
+                    ITEMS["survival_sigil"]["quantity"] -= 1
+
+                    console.clear()
+
+                    console.print(
+                        Panel(
+                            Align.center(
+                                "[bold magenta]"
+                                "🔮 SURVIVAL SIGIL ACTIVATED!"
+                                "[/bold magenta]\n\n"
+
+                                "[white]"
+                                "The boss forgives your mistake."
+                                "[/white]\n\n"
+
+                                f"Survival Sigils remaining: "
+                                f"[bold magenta]"
+                                f"{ITEMS['survival_sigil']['quantity']}"
+                                f"[/bold magenta]"
+                            ),
+                            border_style="magenta",
+                            expand=False,
+                            padding=(2, 6)
+                        )
+                    )
+
+                    # ----------------------------------------
+                    # RESET CURRENT ANSWER
+                    # ----------------------------------------
+
+                    boss_questions[current_question][
+                        "input"
+                    ] = ""
+
+                    time.sleep(1)
+
+                    continue
+
+                # --------------------------------------------
+                # NO SIGIL
+                # --------------------------------------------
+
+                console.clear()
+
+                console.print(
+                    Panel(
+                        Align.center(
+                            "[bold red]"
+                            "☠ BOSS BATTLE FAILED ☠"
+                            "[/bold red]\n\n"
+
+                            "[white]"
+                            "Your answer was incorrect."
+                            "[/white]\n\n"
+
+                            "[dim]"
+                            "The boss remains undefeated."
+                            "[/dim]"
+                        ),
+                        border_style="red",
+                        expand=False,
+                        padding=(2, 6)
+                    )
+                )
+
+                time.sleep(1.5)
+
+                return False
 
 # ============================================================
 # MAIN MENU
@@ -72,9 +1110,11 @@ def main_menu():
         )
 
         menu.add_row("[1]", "⚔  PLAY")
-        menu.add_row("[2]", "🏆 HIGH SCORES")
-        menu.add_row("[3]", "⚙  SETTINGS")
-        menu.add_row("[4]", "🚪 EXIT")
+        menu.add_row("[2]", "⚙  SETTINGS")
+        menu.add_row("[3]", "⚗  SHOP")
+        menu.add_row("[4]", "🏆 HIGH SCORES")
+        menu.add_row("[5]", "📜 CREDITS")
+        menu.add_row("[6]", "🚪 EXIT")
 
         console.print(
             Panel(
@@ -91,18 +1131,26 @@ def main_menu():
         )
 
         if choice == "1":
-
+            game_rules()
             play()
 
         elif choice == "2":
 
-            high_scores()
+            settings()
 
         elif choice == "3":
 
-            settings()
+            shop()
 
         elif choice == "4":
+
+            high_scores()
+
+        elif choice == "5":
+
+            credits()
+
+        elif choice == "6":
 
             console.clear()
 
@@ -159,13 +1207,14 @@ def make_panel(
     question_number,
     factor,
     multiplier,
+    time_limit,
     time_remaining
 ):
 
     bar_length = 20
 
     filled = int(
-        bar_length * time_remaining / 5
+        bar_length * time_remaining / time_limit
     )
 
     bar = (
@@ -184,6 +1233,7 @@ def make_panel(
         ),
         border_style="bright_blue",
         expand=False,
+        width=80,
         padding=(2, 8)
     )
 
@@ -191,6 +1241,7 @@ def make_game_screen(
     question_number,
     factor,
     multiplier,
+    time_limit,
     time_remaining,
     player_answer
 ):
@@ -199,23 +1250,220 @@ def make_game_screen(
         question_number,
         factor,
         multiplier,
+        time_limit,
         time_remaining
     )
 
+    # ------------------------------------------------
+    # ITEM HUD
+    # ------------------------------------------------
+
+    item_lines = []
+
+    chrono_salve_count = ITEMS["chrono_salve"]["quantity"]
+    survival_sigil_count = ITEMS["survival_sigil"]["quantity"]
+    momentum_rune_count = ITEMS["momentum_rune"]["quantity"]
+
+    if chrono_salve_count > 0:
+        item_lines.append(
+            f"[bold cyan]⏳ Chrono-Salve ×{chrono_salve_count}[/bold cyan]"
+        )
+
+    if survival_sigil_count > 0:
+        item_lines.append(
+            f"[bold purple]🔮 Survival Sigil ×{survival_sigil_count}[/bold purple]"
+        )
+
+    if momentum_rune_count > 0:
+        item_lines.append(
+            f"[bold yellow]⚡ Momentum Rune ×{momentum_rune_count}[/bold yellow]"
+        )
+
+    item_text = "\n".join(item_lines)
+
+    input_content = (
+        f"[bold cyan]Your answer › [/bold cyan]"
+        f"[bold white]{player_answer}█[/bold white]"
+    )
+
+    if item_text:
+        input_content += f"\n\n{item_text}"
+
     input_panel = Panel(
-        Align.left(
-            f"[bold cyan]Your answer › [/bold cyan]"
-            f"[bold white]{player_answer}█[/bold white]"
-        ),
+        Align.left(input_content),
         border_style="cyan",
         expand=False,
-        width=40
+        width=80
     )
 
     return Group(
         game_panel,
         input_panel
     )
+# ===========================================================
+# INPUT NAME LOOP
+# ===========================================================
+def get_player_name():
+
+    while True:
+
+        player_name = console.input(
+            "\n[bold cyan]Enter your name › [/bold cyan]"
+        ).strip()
+
+        if player_name:
+            return player_name
+
+        choice = console.input(
+            "\n[bold yellow]Do you want to continue without a name? (Y/N) › [/bold yellow]"
+        ).strip().upper()
+
+        if choice == "Y":
+            return ""
+
+        elif choice == "N":
+            continue
+
+        else:
+            console.print(
+                "\n[bold red]Please enter Y or N.[/bold red]"
+            )
+
+# ============================================================
+# ITEM REWARD
+# ============================================================
+
+def choose_item_reward():
+
+    console.clear()
+
+    reward_table = Table(
+        title="[bold yellow]⚗  ARITHOMANCER REWARD  ⚗[/bold yellow]",
+        border_style="bright_blue",
+        padding=(0, 3)
+    )
+
+    reward_table.add_column(
+        "KEY",
+        style="bold cyan",
+        justify="center"
+    )
+
+    reward_table.add_column(
+        "ITEM",
+        style="bold white"
+    )
+
+    reward_table.add_column(
+        "EFFECT",
+        style="dim white"
+    )
+
+    reward_table.add_row(
+        "[1]",
+        "⏳ Chrono-Salve",
+        "+10 seconds when time expires"
+    )
+
+    reward_table.add_row(
+        "[2]",
+        "🔮 Survival Sigil",
+        "Survive one wrong answer"
+    )
+
+    reward_table.add_row(
+        "[3]",
+        "⚡ Momentum Rune",
+        "+0.5 seconds for each correct answer"
+    )
+
+    console.print(
+        Panel(
+            Align.center(
+                "[bold yellow]✦ MILESTONE REACHED ✦[/bold yellow]\n\n"
+                "Choose one item to add to your inventory.\n"
+            ),
+            border_style="yellow",
+            expand=False,
+            padding=(1, 4)
+        )
+    )
+
+    console.print(reward_table)
+
+    while True:
+
+        choice = console.input(
+            "\n[bold yellow]Choose your reward › [/bold yellow]"
+        ).strip()
+
+        if choice == "1":
+
+            ITEMS["chrono_salve"]["quantity"] += 1
+
+            console.print(
+                Panel(
+                    Align.center(
+                        "[bold cyan]⏳ CHRONO-SALVE ACQUIRED![/bold cyan]\n\n"
+                        "+1 Chrono-Salve\n\n"
+                        f"Inventory: "
+                        f"{ITEMS['chrono_salve']['quantity']}"
+                    ),
+                    border_style="cyan",
+                    expand=False,
+                    padding=(2, 6)
+                )
+            )
+
+            break
+
+        elif choice == "2":
+
+            ITEMS["survival_sigil"]["quantity"] += 1
+
+            console.print(
+                Panel(
+                    Align.center(
+                        "[bold purple]🔮 SURVIVAL SIGIL ACQUIRED![/bold purple]\n\n"
+                        "+1 Survival Sigil\n\n"
+                        f"Inventory: "
+                        f"{ITEMS['survival_sigil']['quantity']}"
+                    ),
+                    border_style="purple",
+                    expand=False,
+                    padding=(2, 6)
+                )
+            )
+
+            break
+
+        elif choice == "3":
+
+            ITEMS["momentum_rune"]["quantity"] += 1
+
+            console.print(
+                Panel(
+                    Align.center(
+                        "[bold yellow]⚡ MOMENTUM RUNE ACQUIRED![/bold yellow]\n\n"
+                        "+1 Momentum Rune\n\n"
+                        f"Inventory: "
+                        f"{ITEMS['momentum_rune']['quantity']}"
+                    ),
+                    border_style="yellow",
+                    expand=False,
+                    padding=(2, 6)
+                )
+            )
+
+            break
+
+        else:
+
+            console.print(
+                "\n[bold red]✗ Choose 1, 2, or 3.[/bold red]"
+            )
+
+    time.sleep(1.2)
 
 # ============================================================
 # PLAY
@@ -223,236 +1471,333 @@ def make_game_screen(
 
 def play():
 
+    # ========================================================
+    # PREPARE STARTING INVENTORY
+    # ========================================================
+
+    # Every new run starts with an empty inventory.
+    for item in ITEMS.values():
+        item["quantity"] = 0
+
+    # ========================================================
+    # APPLY PERMANENT SHOP UPGRADES
+    # ========================================================
+
+    if SHOP_ITEMS["runic_potion"]["owned"]:
+        ITEMS["chrono_salve"]["quantity"] = 2
+
+    if SHOP_ITEMS["soul_shard"]["owned"]:
+        ITEMS["survival_sigil"]["quantity"] = 2
+
+    if SHOP_ITEMS["tempo_crystal"]["owned"]:
+        ITEMS["momentum_rune"]["quantity"] = 2
+
+    # ========================================================
+    # START RUN
+    #
     question_number = 1
+    time_limit = 5.0
 
     while True:
 
         # ----------------------------------------------------
-        # Generate question
+        # GENERATE NEW QUESTION
         # ----------------------------------------------------
 
         factor, multiplier, correct_answer = generate_question(
             question_number
         )
 
-
         # ----------------------------------------------------
-        # State for this question
-        # ----------------------------------------------------
-
-        time_up = threading.Event()
-
-        answer_received = threading.Event()
-
-        stop_timer = threading.Event()
-
-        player_answer = ""
-
-
-
-        # ----------------------------------------
-        # TIMER THREAD
+        # FIGHT THIS QUESTION
         # ----------------------------------------------------
 
-        def timer(live):
+        while True:
 
-            start_time = time.monotonic()
+            # ------------------------------------------------
+            # STATE FOR THIS TIMER ATTEMPT
+            # ------------------------------------------------
 
-            while True:
+            time_up = threading.Event()
+            stop_timer = threading.Event()
+            player_answer = ""
+            remaining_time = time_limit
 
-                # Has the player answered?
-                if stop_timer.is_set():
-                    break
+            # ------------------------------------------------
+            # TIMER THREAD
+            # ------------------------------------------------
 
-                elapsed = time.monotonic() - start_time
+            def timer(live, current_time_limit):
 
-                time_remaining = 5.0 - elapsed
+                start_time = time.monotonic()
 
-                if time_remaining <= 0:
+                while not stop_timer.is_set():
+
+                    elapsed = time.monotonic() - start_time
+                    time_remaining = current_time_limit - elapsed
+                    nonlocal remaining_time
+                    remaining_time = time_remaining
+
+                    if time_remaining <= 0:
+
+                        live.update(
+                            make_game_screen(
+                                question_number,
+                                factor,
+                                multiplier,
+                                current_time_limit,
+                                0,
+                                player_answer
+                            ),
+                            refresh=True
+                        )
+
+                        time_up.set()
+                        break
+
                     live.update(
                         make_game_screen(
                             question_number,
                             factor,
                             multiplier,
+                            current_time_limit,
                             time_remaining,
                             player_answer
                         ),
                         refresh=True
                     )
 
-                    time_up.set()
-                    break
+                    time.sleep(0.05)
 
-                live.update(
-                    make_game_screen(
-                        question_number,
-                        factor,
-                        multiplier,
-                        time_remaining,
-                        player_answer
-                    ),
-                    refresh=True
-                )
+            # ------------------------------------------------
+            # LIVE DISPLAY
+            # ------------------------------------------------
 
-                time.sleep(0.05)
+            console.clear()
 
-
-        # ----------------------------------------------------
-        # LIVE DISPLAY
-        # ----------------------------------------------------
-
-        console.clear()
-
-        with Live(
+            with Live(
                 make_game_screen(
                     question_number,
                     factor,
                     multiplier,
-                    5.0,
+                    time_limit,
+                    time_limit,
                     player_answer
                 ),
                 console=console,
                 refresh_per_second=20
-        ) as live:
+            ) as live:
 
+                timer_thread = threading.Thread(
+                    target=timer,
+                    args=(live, time_limit)
+                )
 
-            # Create timer thread
-            timer_thread = threading.Thread(
-                target=timer,
-                args=(live,)
-            )
+                timer_thread.start()
 
+                # --------------------------------------------
+                # MAIN THREAD = REFEREE
+                # --------------------------------------------
 
+                while True:
 
-
-            # Start both
-            timer_thread.start()
-
-
-
-            # ------------------------------------------------
-            # MAIN THREAD = REFEREE
-            # ------------------------------------------------
-
-            while True:
-
-                # Timer won
-                if time_up.is_set():
-                    break
-
-                # Check keyboard
-                if msvcrt.kbhit():
-
-                    key = readchar.readkey()
-
-                    if key == readchar.key.ENTER:
-
-                        answer_received.set()
-                        stop_timer.set()
+                    if time_up.is_set():
                         break
 
-                    elif key == readchar.key.BACKSPACE:
+                    if msvcrt.kbhit():
 
-                        player_answer = player_answer[:-1]
+                        key = readchar.readkey()
 
-                    elif key.isdigit():
+                        if key == readchar.key.ENTER:
 
-                        player_answer += key
+                            # Blank input is NOT an answer.
+                            # Keep the timer running.
+                            if not player_answer:
+                                continue
 
-                time.sleep(0.01)
-            timer_thread.join()
+                            stop_timer.set()
+                            break
 
+                        elif key == readchar.key.BACKSPACE:
 
-        # ====================================================
-        # TIMER WON
-        # ====================================================
+                            player_answer = player_answer[:-1]
 
-        if time_up.is_set():
+                        elif key.isdigit():
 
-            console.print(
-                Panel(
-                    Align.center(
-                        "[bold red]☠ TIME'S UP ☠[/bold red]\n\n"
-                        f"{factor} × {multiplier} = "
-                        f"{correct_answer}\n\n"
-                        f"[yellow]Questions survived: "
-                        f"{question_number - 1}[/yellow]"
-                    ),
-                    border_style="red",
-                    expand=False,
-                    padding=(2, 6)
+                            player_answer += key
+
+                    time.sleep(0.01)
+
+                timer_thread.join()
+
+            # ------------------------------------------------
+            # PLAYER ANSWER RECEIVED
+            # ------------------------------------------------
+
+            if not time_up.is_set():
+
+                if not player_answer:
+                    continue
+
+                try:
+                    player_answer = int(player_answer)
+
+                except (ValueError, TypeError):
+                    continue
+
+                # ============================================
+                # CORRECT
+                # ============================================
+
+                if player_answer == correct_answer:
+
+                    momentum_bonus = ITEMS["momentum_rune"]["quantity"] * 0.5
+
+                    time_limit += 1.0 + momentum_bonus
+
+                    console.print(
+                        Panel(
+                            Align.center(
+                                "[bold green]✓ CORRECT![/bold green]\n\n"
+                                f"{factor} × {multiplier} = "
+                                f"{correct_answer}"
+                            ),
+                            border_style="green",
+                            expand=False
+                        )
+                    )
+
+                    question_number += 1
+
+                    time.sleep(1)
+
+                    # ------------------------------------------------
+                    # MILESTONE REWARD
+                    # ------------------------------------------------
+
+                    if (question_number - 1) % 10 == 0:
+                        choose_item_reward()
+
+                    break
+
+                # ============================================
+                # WRONG
+                # ============================================
+
+                else:
+
+                    if ITEMS["survival_sigil"]["quantity"] > 0:
+                        ITEMS["survival_sigil"]["quantity"] -= 1
+
+                        console.print(
+                            Panel(
+                                Align.center(
+                                    "[bold purple]🔮 SURVIVAL SIGIL ACTIVATED![/bold purple]\n\n"
+                                    "[white]Your mistake has been forgiven.[/white]\n\n"
+                                    f"Survival Sigils remaining: "
+                                    f"{ITEMS['survival_sigil']['quantity']}"
+                                ),
+                                border_style="purple",
+                                expand=False,
+                                padding=(2, 6)
+                            )
+                        )
+
+                        # The timer has already been stopped.
+                        # Preserve exactly how much time was left.
+                        time_limit = max(0.1, remaining_time)
+
+                        # The next inner-loop iteration gets
+                        # a fresh input field.
+                        time.sleep(0.5)
+
+                        continue
+
+                    # ----------------------------------------
+                    # NO SURVIVAL SIGIL → GAME OVER
+                    # ----------------------------------------
+
+                    console.print(
+                        Panel(
+                            Align.center(
+                                "[bold red]☠ GAME OVER ☠[/bold red]\n\n"
+                                f"{factor} × {multiplier} = "
+                                f"{correct_answer}\n\n"
+                                f"You answered: {player_answer}\n\n"
+                                f"[yellow]Questions survived: "
+                                f"{question_number - 1}[/yellow]"
+                            ),
+                            border_style="red",
+                            expand=False,
+                            padding=(2, 6)
+                        )
+                    )
+
+                    player_name = get_player_name()
+
+                    save_score(
+                        player_name,
+                        question_number - 1
+                    )
+
+                    return
+            # ------------------------------------------------
+            # TIMER EXPIRED
+            # ------------------------------------------------
+
+            if time_up.is_set():
+
+                if ITEMS["chrono_salve"]["quantity"] > 0:
+
+                    ITEMS["chrono_salve"]["quantity"] -= 1
+
+                    console.print(
+                        Panel(
+                            Align.center(
+                                "[bold cyan]⏳ CHRONO-SALVE ACTIVATED![/bold cyan]\n\n"
+                                "[yellow]+10 seconds![/yellow]\n\n"
+                                f"Chrono-Salves remaining: "
+                                f"{ITEMS['chrono_salve']['quantity']}"
+                            ),
+                            border_style="cyan",
+                            expand=False,
+                            padding=(2, 6)
+                        )
+                    )
+
+                    time_limit = 10.0
+
+                    time.sleep(1)
+
+                    continue
+
+                # --------------------------------------------
+                # NO CHRONO-SALVE → GAME OVER
+                # --------------------------------------------
+
+                console.print(
+                    Panel(
+                        Align.center(
+                            "[bold red]☠ TIME'S UP ☠[/bold red]\n\n"
+                            f"{factor} × {multiplier} = "
+                            f"{correct_answer}\n\n"
+                            f"[yellow]Questions survived: "
+                            f"{question_number - 1}[/yellow]"
+                        ),
+                        border_style="red",
+                        expand=False,
+                        padding=(2, 6)
+                    )
                 )
-            )
 
-            console.input(
-                "\n[dim]Press ENTER to return to the menu...[/dim]"
-            )
+                player_name = get_player_name()
 
-            break
-
-
-        # ====================================================
-        # PLAYER ANSWER
-        # ====================================================
-
-        try:
-
-            player_answer = int(player_answer)
-
-        except (ValueError, TypeError):
-
-            player_answer = None
-
-
-        # ====================================================
-        # CORRECT
-        # ====================================================
-
-        if player_answer == correct_answer:
-
-            console.print(
-                Panel(
-                    Align.center(
-                        "[bold green]✓ CORRECT![/bold green]\n\n"
-                        f"{factor} × {multiplier} = "
-                        f"{correct_answer}"
-                    ),
-                    border_style="green",
-                    expand=False
+                save_score(
+                    player_name,
+                    question_number - 1
                 )
-            )
 
-            question_number += 1
-
-
-
-        # ====================================================
-        # WRONG
-        # ====================================================
-
-        else:
-
-            console.print(
-                Panel(
-                    Align.center(
-                        "[bold red]☠ GAME OVER ☠[/bold red]\n\n"
-                        f"{factor} × {multiplier} = "
-                        f"{correct_answer}\n"
-                        f"You answered: {player_answer}\n\n"
-                        f"[yellow]Questions survived: "
-                        f"{question_number - 1}[/yellow]"
-                    ),
-                    border_style="red",
-                    expand=False,
-                    padding=(2, 6)
-                )
-            )
-
-            console.input(
-                "\n[dim]Press ENTER to return to the menu...[/dim]"
-            )
-
-            break
+                return
 
 
 # ============================================================
@@ -481,6 +1826,32 @@ def high_scores():
 
 
 # ============================================================
+# CREDITS
+# ============================================================
+
+def credits():
+
+    console.clear()
+
+    console.print(
+        Panel(
+            Align.center(
+                "[bold cyan]ARITHOMANCER[/bold cyan]\n\n"
+                "[bold yellow]Version 1.0[/bold yellow]\n\n"
+                "Programmed by [bold green]beo-wu1f[/bold green]"
+            ),
+            title="[bold cyan]CREDITS[/bold cyan]",
+            border_style="cyan",
+            expand=False,
+            padding=(2, 8)
+        )
+    )
+
+    console.input(
+        "\n[dim]Press ENTER to return to the menu...[/dim]"
+    )
+
+# ============================================================
 # SETTINGS
 # ============================================================
 
@@ -505,9 +1876,199 @@ def settings():
         "\nPress ENTER to return to the menu..."
     )
 
+# ======================================================
+# HIGH SCORES
+# ======================================================
+def high_scores():
+
+    console.clear()
+
+    scores = get_high_scores()
+
+    table = Table(
+        title="🏆 HIGH SCORES",
+        border_style="cyan"
+    )
+
+    table.add_column("#", justify="center")
+    table.add_column("PLAYER")
+    table.add_column("QUESTIONS SURVIVED", justify="center")
+    table.add_column("DATE", justify="center")
+
+    for position, score in enumerate(scores, start=1):
+
+        player, questions, played_date = score
+
+        table.add_row(
+            str(position),
+            player,
+            str(questions),
+            played_date
+        )
+
+    console.print(table)
+
+    console.input(
+        "\n[dim]Press ENTER to return to the menu...[/dim]"
+    )
+
+# ============================================================
+# SETTINGS
+# ===========================================================
+def settings():
+
+    while True:
+
+        console.clear()
+
+        settings_table = Table(
+            box=None,
+            show_header=False,
+            padding=(0, 2)
+        )
+
+        settings_table.add_column(
+            "Key",
+            style="bold yellow",
+            justify="center"
+        )
+
+        settings_table.add_column(
+            "Action",
+            style="bold white"
+        )
+
+        settings_table.add_row(
+            "[1]",
+            "Reset High Scores"
+        )
+
+        settings_table.add_row(
+            "[2]",
+            "Back"
+        )
+
+        console.print(
+            Panel(
+                Align.center(settings_table),
+                title="[bold cyan]SETTINGS[/bold cyan]",
+                border_style="cyan",
+                expand=False,
+                padding=(1, 4)
+            )
+        )
+
+        choice = console.input(
+            "\n[bold yellow]Choose an option › [/bold yellow]"
+        )
+
+        if choice == "1":
+
+            reset_high_scores_confirmation()
+
+        elif choice == "2":
+
+            break
+
+        else:
+
+            console.print(
+                "\n[bold red]✗ Invalid choice.[/bold red]"
+            )
+
+            console.input(
+                "\nPress ENTER to continue..."
+            )
+
+# ===========================================================
+# RESET HIGH SCORES
+# ===========================================================
+def reset_high_scores_confirmation():
+
+    console.clear()
+
+    console.print(
+        Panel(
+            Align.center(
+                "[bold red]⚠ RESET HIGH SCORES[/bold red]\n\n"
+                "This will permanently delete\n"
+                "all high scores.\n\n"
+                "[bold yellow]Are you sure?[/bold yellow]"
+            ),
+            border_style="red",
+            expand=False,
+            padding=(2, 6)
+        )
+    )
+
+    choice = console.input(
+        "\n[bold yellow]Type YES to confirm › [/bold yellow]"
+    )
+
+    if choice == "YES":
+
+        reset_high_scores()
+
+        console.print(
+            Panel(
+                Align.center(
+                    "[bold green]✓ HIGH SCORES RESET[/bold green]\n\n"
+                    "The leaderboard is now empty."
+                ),
+                border_style="green",
+                expand=False,
+                padding=(2, 6)
+            )
+        )
+
+    else:
+
+        console.print(
+            Panel(
+                Align.center(
+                    "[bold cyan]Reset cancelled.[/bold cyan]"
+                ),
+                border_style="cyan",
+                expand=False
+            )
+        )
+
+    console.input(
+        "\n[dim]Press ENTER to continue...[/dim]"
+    )
+
+# ===========================================================
+# SHOW INVENTORY
+# ==========================================================
+def show_inventory():
+
+    console.clear()
+
+    inventory = Table(
+        title="⚗  ARITHOMANCER INVENTORY",
+        border_style="cyan"
+    )
+
+    inventory.add_column("ITEM", style="bold yellow")
+    inventory.add_column("QUANTITY", justify="center", style="bold cyan")
+    inventory.add_column("EFFECT")
+
+    for item in ITEMS.values():
+
+        inventory.add_row(
+            item["name"],
+            str(item["quantity"]),
+            item["description"]
+        )
+
+    console.print(inventory)
+
+    console.input(
+        "\n[dim]Press ENTER to return...[/dim]"
+    )
+
 
 # ============================================================
 # START GAME
 # ============================================================
-
 main_menu()
