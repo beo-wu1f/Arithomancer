@@ -111,14 +111,6 @@ Every correct answer matters.
 
 Every mistake brings you closer to defeat.
 
-### 🧠 Accuracy Under Pressure
-
-A boss battle isn't simply about knowing the answer.
-
-You have to calculate **quickly and consistently** while dealing with
-the pressure of a limited timer.
-
-The further you progress, the more valuable every second becomes.
 
 ### 🏆 Defeat the Boss
 
@@ -331,8 +323,8 @@ Python's built-in `msvcrt` module.
 Clone the repository and move into the project directory:
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/YOUR-REPOSITORY.git
-cd YOUR-REPOSITORY
+git clone git clone https://github.com/beo-wu1f/Arithomancer.git
+cd Arithomancer
 ```
 
 ### ⚙️ 2. Create a Virtual Environment
