@@ -14,37 +14,6 @@ Every run is a test of **speed, accuracy, decision-making, and nerve.**
 
 ---
 
-## 🧙 YOUR JOURNEY BEGINS
-
-```text
-                    ⚡ ARITHOMANCER ⚡
-
-              THE ROGUE-LIKE MULTIPLICATION GAME
-
-
-        ⚔️  ANSWER
-              │
-              ▼
-        ⏱️  SURVIVE
-              │
-              ▼
-        🔮  POWER UP
-              │
-              ▼
-        💎  EARN ARCANA
-              │
-              ▼
-        🛒  BUILD YOUR RUN
-              │
-              ▼
-        👹  DEFEAT THE BOSS
-              │
-              ▼
-        ⚡  GO FURTHER
-              │
-              └───────────────► HOW FAR CAN YOU GO?
-
-```
 
 
 <p align="center">
@@ -54,6 +23,7 @@ Every run is a test of **speed, accuracy, decision-making, and nerve.**
 <p align="center">
   <i>The Arcana awaits. How far can you calculate?</i>
 </p>
+
 ## 🎮 THE GAMEPLAY LOOP
 
 Arithomancer takes the familiar challenge of multiplication tables and
