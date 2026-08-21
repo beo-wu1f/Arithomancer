@@ -1,4 +1,5 @@
 from rich.console import Console, Group
+from rich.text import Text
 from rich.table import Table
 from rich.panel import Panel
 from rich.align import Align
@@ -7,15 +8,20 @@ import readchar
 from database import (
     save_score,
     get_high_scores,
-    reset_high_scores
+    reset_high_scores,
+    create_table,
+    create_profile,
+    get_profiles,
+    get_profile,
+    profile_exists,
+    save_profile,
+    delete_profile
 )
 import random
 import time
 import threading
 import msvcrt
-import sqlite3
 
-DATABASE = "arithomancer.db"
 
 TIME_LIMIT = 5.0
 
@@ -41,18 +47,47 @@ def banner():
              ≋≋≋  ~~~  THE ROGUE-LIKE MULTIPLICATION GAME  ~~~  ≋≋≋
     """
 
+    greeting = Text()
+
+    greeting.append("━━━━━━ ", style="green")
+    greeting.append("✦ ", style="green")
+    greeting.append("Welcome, ", style="white")
+    greeting.append(CURRENT_PROFILE_NAME, style="cyan")
+    greeting.append(" ✦ ", style="green")
+    greeting.append("━━━━━━", style="green")
+
+    # Measure the width of the main title
+    title_text = Text.from_markup(
+        f"[bold cyan]{title}[/bold cyan]"
+    )
+
+    title_width = console.measure(title_text).maximum
+
     console.print(
         Panel(
-            Align.center(
-                f"[bold cyan]{title}[/bold cyan]\n"
-                f"[bold yellow]{subtitle}[/bold yellow]"
+            Group(
+                Align.center(
+                    title_text,
+                    width=title_width
+                ),
+
+                Align.center(
+                    Text.from_markup(
+                        f"[bold yellow]{subtitle}[/bold yellow]"
+                    ),
+                    width=title_width
+                ),
+
+                Align.center(
+                    greeting,
+                    width=title_width
+                )
             ),
             border_style="bright_blue",
             padding=(1, 2),
             expand=False
         )
     )
-
 def game_rules():
 
     console.clear()
@@ -66,23 +101,13 @@ def game_rules():
         "• Correct answer → +1 second for the next question.\n\n"
         "• Wrong answer → GAME OVER.\n\n"
         "• Time runs out → GAME OVER.\n\n"
-        "• Your score is the number of questions you survive."
+        "• Your score is the number of questions you survive.\n\n"
+        "•  ☠ BOSS\n\n"
+        "• Every 30 questions, face a Boss with 3 questions.\n\n"
+        "• Answer each separately and press SPACE to lock it. All 3 must be correct.\n\n"
+        "• Defeat the Boss: +20 seconds and +1 Arcana."
     )
 
-    rules.add_row(
-        "[bold red]☠ BOSS[/bold red]",
-        "Every 30 questions, face a Boss with 3 questions."
-    )
-
-    rules.add_row(
-        "[bold yellow]⚔ BOSS RULE[/bold yellow]",
-        "Answer each separately and press SPACE to lock it. All 3 must be correct."
-    )
-
-    rules.add_row(
-        "[bold cyan]✦ REWARD[/bold cyan]",
-        "Defeat the Boss: +20 seconds and +1 Arcana."
-    )
     console.print(
         Panel(
             Align.center(
@@ -129,7 +154,14 @@ ITEMS = {
 # META CURRENCY
 # ============================================================
 
-ARCANA = 10
+ARCANA = 0
+
+# ============================================================
+# CURRENT PROFILE
+# ============================================================
+
+CURRENT_PROFILE_ID = None
+CURRENT_PROFILE_NAME = ""
 
 # ============================================================
 # PERMANENT SHOP UPGRADES
@@ -265,6 +297,12 @@ def buy_shop_item(item_key):
 
     item["owned"] = True
 
+    # --------------------------------------------------------
+    # SAVE PROFILE AFTER PURCHASE
+    # --------------------------------------------------------
+
+    save_current_profile()
+
     console.print(
         Panel(
             Align.center(
@@ -285,8 +323,432 @@ def buy_shop_item(item_key):
     )
 
 # ============================================================
+# PROFIL ENGINE
+# ============================================================
+
+def save_current_profile():
+
+    global CURRENT_PROFILE_ID
+
+    if CURRENT_PROFILE_ID is None:
+        return
+
+    save_profile(
+        CURRENT_PROFILE_ID,
+        ARCANA,
+        SHOP_ITEMS["runic_potion"]["owned"],
+        SHOP_ITEMS["soul_shard"]["owned"],
+        SHOP_ITEMS["tempo_crystal"]["owned"]
+    )
+
+
+# ------------------------------------------------------------
+# LOAD PROFILE INTO GAME
+# ------------------------------------------------------------
+
+def load_profile_into_game(profile):
+
+    global ARCANA
+    global CURRENT_PROFILE_ID
+    global CURRENT_PROFILE_NAME
+
+    (
+        profile_id,
+        name,
+        arcana,
+        runic_potion_owned,
+        soul_shard_owned,
+        tempo_crystal_owned
+    ) = profile
+
+    CURRENT_PROFILE_ID = profile_id
+    CURRENT_PROFILE_NAME = name
+
+    ARCANA = arcana
+
+    SHOP_ITEMS["runic_potion"]["owned"] = bool(
+        runic_potion_owned
+    )
+
+    SHOP_ITEMS["soul_shard"]["owned"] = bool(
+        soul_shard_owned
+    )
+
+    SHOP_ITEMS["tempo_crystal"]["owned"] = bool(
+        tempo_crystal_owned
+    )
+
+
+# ------------------------------------------------------------
+# CREATE NEW PROFILE
+# ------------------------------------------------------------
+
+def create_save_state(from_settings=False):
+
+    global CURRENT_PROFILE_ID
+    global CURRENT_PROFILE_NAME
+    global ARCANA
+
+    while True:
+
+        console.clear()
+
+        console.print(
+            Panel(
+                Align.center(
+                    "[bold cyan]✦ CREATE PROFILE ✦[/bold cyan]\n\n"
+                    "[dim]Your name will become your profile.[/dim]\n"
+                    "[dim]You can change profiles later from Settings.[/dim]"
+                ),
+                border_style="cyan",
+                expand=False,
+                padding=(2, 6)
+            )
+        )
+
+        name = console.input(
+            "\n[bold yellow]Enter your name › [/bold yellow]"
+        ).strip()
+
+        # ----------------------------------------------------
+        # EMPTY NAME
+        # ----------------------------------------------------
+
+        if not name:
+
+            console.print(
+                "\n[bold red]✗ A profile needs a name.[/bold red]"
+            )
+
+            time.sleep(1)
+
+            continue
+
+        # ----------------------------------------------------
+        # DUPLICATE NAME
+        # ----------------------------------------------------
+
+        if profile_exists(name):
+
+            console.print(
+                "\n[bold red]✗ That profile already exists.[/bold red]"
+            )
+
+            console.input(
+                "\n[dim]Press ENTER to choose another name...[/dim]"
+            )
+
+            continue
+
+        # ----------------------------------------------------
+        # CREATE PROFILE
+        # ----------------------------------------------------
+
+        profile_id = create_profile(name)
+
+        if profile_id is None:
+
+            console.print(
+                "\n[bold red]✗ Could not create profile.[/bold red]"
+            )
+
+            time.sleep(1)
+
+            continue
+
+        # ----------------------------------------------------
+        # RESET RUNTIME PROGRESSION
+        # ----------------------------------------------------
+
+        CURRENT_PROFILE_ID = profile_id
+        CURRENT_PROFILE_NAME = name
+
+        ARCANA = 0
+
+        for item in SHOP_ITEMS.values():
+            item["owned"] = False
+
+        # ----------------------------------------------------
+        # SAVE INITIAL STATE
+        # ----------------------------------------------------
+
+        save_current_profile()
+
+        console.clear()
+
+        if not from_settings:
+            console.input(
+                "\n[dim]Press ENTER to enter the main menu...[/dim]"
+            )
+        return
+
+
+# ------------------------------------------------------------
+# LOAD EXISTING PROFILES
+# ------------------------------------------------------------
+
+def load_save_state():
+
+    profiles = get_profiles()
+
+    if not profiles:
+
+        console.clear()
+
+        console.print(
+            Panel(
+                Align.center(
+                    "[bold yellow]✦ NO PROFILES FOUND ✦[/bold yellow]\n\n"
+                    "[dim]There are currently no Arithomancer profiles.[/dim]"
+                ),
+                border_style="yellow",
+                expand=False,
+                padding=(2, 6)
+            )
+        )
+
+        console.input(
+            "\n[dim]Press ENTER to return...[/dim]"
+        )
+
+        return False
+
+    while True:
+
+        console.clear()
+
+        console.print(
+            Panel(
+                Align.center(
+                    "[bold cyan]✦ LOAD PROFILE ✦[/bold cyan]\n\n"
+                    "[dim]Choose the Arithomancer you wish to become.[/dim]"
+                ),
+                border_style="cyan",
+                expand=False,
+                padding=(1, 6)
+            )
+        )
+
+        profile_table = Table(
+            box=None,
+            show_header=False,
+            padding=(0, 3)
+        )
+
+        profile_table.add_column(
+            "Key",
+            style="bold yellow",
+            justify="center"
+        )
+
+        profile_table.add_column(
+            "Profile",
+            style="bold white"
+        )
+
+        profile_table.add_column(
+            "Arcana",
+            style="bold cyan",
+            justify="center"
+        )
+
+        for index, profile in enumerate(profiles, start=1):
+
+            (
+                profile_id,
+                name,
+                arcana,
+                runic_potion_owned,
+                soul_shard_owned,
+                tempo_crystal_owned
+            ) = profile
+
+            profile_table.add_row(
+                f"[{index}]",
+                name,
+                f"{arcana} ✦",
+            )
+
+        profile_table.add_row(
+            "",
+            "",
+            "",
+            ""
+        )
+
+        profile_table.add_row(
+            "[B]",
+            "Back",
+            "",
+            ""
+        )
+
+        console.print(
+            Panel(
+                Align.center(profile_table),
+                border_style="cyan",
+                expand=False,
+                padding=(1, 4)
+            )
+        )
+
+        choice = console.input(
+            "\n[bold yellow]Choose your profile › [/bold yellow]"
+        ).strip().lower()
+
+        # ----------------------------------------------------
+        # BACK
+        # ----------------------------------------------------
+
+        if choice == "b":
+            return False
+
+        # ----------------------------------------------------
+        # PROFILE SELECTION
+        # ----------------------------------------------------
+
+        if choice.isdigit():
+
+            selection = int(choice)
+
+            if 1 <= selection <= len(profiles):
+
+                selected_profile = profiles[selection - 1]
+
+                load_profile_into_game(selected_profile)
+
+                console.clear()
+
+                console.print(
+                    Panel(
+                        Align.center(
+                            "[bold green]✦ PROFILE LOADED ✦[/bold green]\n\n"
+                            f"[bold white]{CURRENT_PROFILE_NAME}[/bold white]\n\n"
+                            f"Arcana: [bold yellow]{ARCANA} ✦[/bold yellow]\n\n"
+                            "[dim]Welcome back, Arithomancer.[/dim]"
+                        ),
+                        border_style="green",
+                        expand=False,
+                        padding=(2, 8)
+                    )
+                )
+
+                console.input(
+                    "\n[dim]Press ENTER to enter the main menu...[/dim]"
+                )
+
+                return True
+
+        console.print(
+            "\n[bold red]✗ Invalid profile.[/bold red]"
+        )
+
+        time.sleep(0.8)
+
+
+# ------------------------------------------------------------
+# FIRST LAUNCH / PROFILE GATE
+# ------------------------------------------------------------
+
+def save_state_screen():
+
+    while True:
+
+        console.clear()
+
+        title = Text(
+            "✦  A R I T H O M A N C E R  ✦\n",
+            style="bold cyan"
+        )
+
+        subtitle = Text(
+            "THE ROGUE-LIKE MULTIPLICATION GAME\n",
+            style="bold yellow"
+        )
+
+        tagline = Text(
+            "Your journey awaits.",
+            style="white"
+        )
+
+        console.print(
+            Panel(
+                Group(
+                    Align.center(title),
+                    Align.center(subtitle),
+                    Align.center(tagline),
+                ),
+                border_style="bright_blue",
+                padding=(2, 6),
+                expand=False
+            )
+        )
+
+        menu = Table(
+            box=None,
+            show_header=False,
+            padding=(0, 3)
+        )
+
+        menu.add_column(
+            "Key",
+            style="bold yellow",
+            justify="center"
+        )
+
+        menu.add_column(
+            "Action",
+            style="bold white"
+        )
+
+        menu.add_row(
+            "[1]",
+            "✦ CREATE PROFILE"
+        )
+
+        menu.add_row(
+            "[2]",
+            "◈ LOAD PROFILE"
+        )
+
+        console.print()
+
+        console.print(
+            Panel(
+                Align.center(menu),
+                title="[bold cyan]PROFILES[/bold cyan]",
+                border_style="cyan",
+                expand=False,
+                padding=(1, 5)
+            )
+        )
+
+        choice = console.input(
+            "\n[bold yellow]Choose your destiny › [/bold yellow]"
+        ).strip()
+
+        if choice == "1":
+
+            create_save_state()
+            return
+
+        elif choice == "2":
+
+            if load_save_state():
+                return
+
+        else:
+
+            console.print(
+                "\n[bold red]✗ Choose 1 or 2.[/bold red]"
+            )
+
+            time.sleep(0.8)
+
+# ============================================================
 # ARCANE SHOP
 # ============================================================
+
 
 def shop():
 
@@ -757,31 +1219,32 @@ def boss_battle(time_limit):
         # SCREEN
         # ====================================================
 
-        content = (
-            "[bold red]☠  B O S S   B A T T L E  ☠[/bold red]\n\n"
+        content_parts = [
+            "[bold red]☠  B O S S   B A T T L E  ☠[/bold red]\n\n",
 
             "[bold yellow]"
             "Solve all three equations."
-            "[/bold yellow]\n"
+            "[/bold yellow]\n",
 
             "[dim]"
             "Type each answer separately and press SPACE to lock it."
-            "[/dim]\n\n"
+            "[/dim]\n\n",
 
-            f"{boss_table}\n\n"
+            boss_table,
 
-            "[bold yellow]TIME REMAINING[/bold yellow]\n"
+            "\n[bold yellow]TIME REMAINING[/bold yellow]\n",
 
-            f"[bold cyan]{timer_bar}[/bold cyan]\n"
+            f"[bold cyan]{timer_bar}[/bold cyan]\n",
 
             f"[bold white]{remaining:.1f}s[/bold white]"
-        )
+        ]
 
         if items_text:
-
-            content += (
+            content_parts.append(
                 f"\n\n{items_text}"
             )
+
+        content = Group(*content_parts)
 
         return Panel(
             Align.center(content),
@@ -794,270 +1257,79 @@ def boss_battle(time_limit):
     # BOSS LOOP
     # ========================================================
 
-    while True:
+    with Live(
+            draw_boss()[0],
+            console=console,
+            refresh_per_second=20
+    ) as live:
 
-        # ----------------------------------------------------
-        # TIMER CHECK
-        # ----------------------------------------------------
-
-        screen, remaining = draw_boss()
-
-        console.clear()
-
-        console.print(
-            screen
-        )
-
-        # ----------------------------------------------------
-        # TIME UP
-        # ----------------------------------------------------
-
-        if remaining <= 0:
-
-            # ================================================
-            # CHRONO-SALVE
-            # ================================================
-
-            if ITEMS["chrono_salve"]["quantity"] > 0:
-
-                ITEMS["chrono_salve"]["quantity"] -= 1
-
-                console.print(
-                    Panel(
-                        Align.center(
-                            "[bold cyan]"
-                            "⏳ CHRONO-SALVE ACTIVATED!"
-                            "[/bold cyan]\n\n"
-
-                            "[bold white]"
-                            "+10 seconds"
-                            "[/bold white]\n\n"
-
-                            f"Chrono-Salves remaining: "
-                            f"[bold cyan]"
-                            f"{ITEMS['chrono_salve']['quantity']}"
-                            f"[/bold cyan]"
-                        ),
-                        border_style="cyan",
-                        expand=False,
-                        padding=(2, 6)
-                    )
-                )
-
-                # --------------------------------------------
-                # ADD TIME
-                # --------------------------------------------
-
-                time_limit += 10
-
-                # Restart timer from current moment.
-                start_time = time.monotonic()
-
-                time.sleep(1)
-
-                continue
-
-            # ================================================
-            # GAME OVER
-            # ================================================
-
-            console.print(
-                Panel(
-                    Align.center(
-                        "[bold red]"
-                        "☠ BOSS BATTLE FAILED ☠"
-                        "[/bold red]\n\n"
-
-                        "[white]"
-                        "Time ran out."
-                        "[/white]"
-                    ),
-                    border_style="red",
-                    expand=False,
-                    padding=(2, 6)
-                )
-            )
-
-            return False
-
-        # ====================================================
-        # ALL THREE SOLVED
-        # ====================================================
-
-        if current_question >= 3:
-
-            # -----------------------------------------------
-            # BOSS DEFEATED
-            # -----------------------------------------------
-
-            ARCANA += 1
-
-            time_limit += 20
-
-            console.clear()
-
-            console.print(
-                Panel(
-                    Align.center(
-                        "[bold green]"
-                        "⚔  B O S S   D E F E A T E D  ⚔"
-                        "[/bold green]\n\n"
-
-                        "[bold yellow]"
-                        "✦ +20 seconds"
-                        "[/bold yellow]\n"
-
-                        "[bold cyan]"
-                        "✦ +1 Arcana"
-                        "[/bold cyan]\n\n"
-
-                        f"[dim]"
-                        f"Arcana: {ARCANA}"
-                        f"[/dim]"
-                    ),
-                    border_style="green",
-                    expand=False,
-                    padding=(2, 8)
-                )
-            )
-
-            time.sleep(1.5)
-
-            return True
-
-        # ====================================================
-        # READ KEY
-        # ====================================================
-
-        key = readchar.readkey()
-
-        # ====================================================
-        # NUMBER
-        # ====================================================
-
-        if key.isdigit():
-
-            # -----------------------------------------------
-            # ONLY CURRENT QUESTION ACCEPTS INPUT
-            # -----------------------------------------------
-
-            boss_questions[current_question]["input"] += key
-
-        # ====================================================
-        # BACKSPACE
-        # ====================================================
-
-        elif key == readchar.key.BACKSPACE:
-
-            boss_questions[current_question]["input"] = (
-                boss_questions[current_question]["input"][:-1]
-            )
-
-        # ====================================================
-        # SPACE = LOCK ANSWER
-        # ====================================================
-
-        elif key == " ":
-
-            answer_text = (
-                boss_questions[current_question]["input"]
-            )
-
+        while True:
             # ------------------------------------------------
-            # BLANK ANSWER
+            # TIMER CHECK
             # ------------------------------------------------
 
-            if answer_text == "":
+            screen, remaining = draw_boss()
 
-                continue
-
-            # ------------------------------------------------
-            # CHECK ANSWER
-            # ------------------------------------------------
-
-            try:
-
-                player_answer = int(
-                    answer_text
-                )
-
-            except ValueError:
-
-                continue
-
-            correct_answer = (
-                boss_questions[current_question]["answer"]
+            live.update(
+                screen,
+                refresh=True
             )
 
-            # =================================================
-            # CORRECT
-            # =================================================
+            # ----------------------------------------------------
+            # TIME UP
+            # ----------------------------------------------------
 
-            if player_answer == correct_answer:
+            if remaining <= 0:
 
-                boss_questions[current_question]["locked"] = True
+                # ================================================
+                # CHRONO-SALVE
+                # ================================================
 
-                current_question += 1
+                if ITEMS["chrono_salve"]["quantity"] > 0:
 
-                continue
+                    ITEMS["chrono_salve"]["quantity"] -= 1
 
-            # =================================================
-            # WRONG
-            # =================================================
-
-            else:
-
-                # --------------------------------------------
-                # SURVIVAL SIGIL
-                # --------------------------------------------
-
-                if ITEMS["survival_sigil"]["quantity"] > 0:
-
-                    ITEMS["survival_sigil"]["quantity"] -= 1
-
-                    console.clear()
-
-                    console.print(
+                    live.update(
                         Panel(
                             Align.center(
-                                "[bold magenta]"
-                                "🔮 SURVIVAL SIGIL ACTIVATED!"
-                                "[/bold magenta]\n\n"
+                                "[bold cyan]"
+                                "⏳ CHRONO-SALVE ACTIVATED!"
+                                "[/bold cyan]\n\n"
 
-                                "[white]"
-                                "The boss forgives your mistake."
-                                "[/white]\n\n"
+                                "[bold white]"
+                                "+10 seconds"
+                                "[/bold white]\n\n"
 
-                                f"Survival Sigils remaining: "
-                                f"[bold magenta]"
-                                f"{ITEMS['survival_sigil']['quantity']}"
-                                f"[/bold magenta]"
+                                f"Chrono-Salves remaining: "
+                                f"[bold cyan]"
+                                f"{ITEMS['chrono_salve']['quantity']}"
+                                f"[/bold cyan]"
                             ),
-                            border_style="magenta",
+                            border_style="cyan",
                             expand=False,
                             padding=(2, 6)
-                        )
+                        ),
+                        refresh=True
                     )
 
-                    # ----------------------------------------
-                    # RESET CURRENT ANSWER
-                    # ----------------------------------------
+                    # --------------------------------------------
+                    # ADD TIME
+                    # --------------------------------------------
 
-                    boss_questions[current_question][
-                        "input"
-                    ] = ""
+                    time_limit += 10
+
+                    # Restart timer from current moment.
+                    start_time = time.monotonic()
 
                     time.sleep(1)
 
                     continue
 
-                # --------------------------------------------
-                # NO SIGIL
-                # --------------------------------------------
+                # ================================================
+                # GAME OVER
+                # ================================================
 
-                console.clear()
-
-                console.print(
+                live.update(
                     Panel(
                         Align.center(
                             "[bold red]"
@@ -1065,22 +1337,232 @@ def boss_battle(time_limit):
                             "[/bold red]\n\n"
 
                             "[white]"
-                            "Your answer was incorrect."
-                            "[/white]\n\n"
-
-                            "[dim]"
-                            "The boss remains undefeated."
-                            "[/dim]"
+                            "Time ran out."
+                            "[/white]"
                         ),
                         border_style="red",
                         expand=False,
                         padding=(2, 6)
-                    )
+                    ),
+                    refresh=True
                 )
 
                 time.sleep(1.5)
 
+                return False, time_limit
+
                 return False
+
+            # ====================================================
+            # ALL THREE SOLVED
+            # ====================================================
+
+            if current_question >= 3:
+
+                # -----------------------------------------------
+                # BOSS DEFEATED
+                # -----------------------------------------------
+
+                ARCANA += 1
+                save_current_profile()
+
+
+                time_limit += 20
+
+                console.clear()
+
+                live.update(
+                    Panel(
+                        Align.center(
+                            "[bold green]"
+                            "⚔  B O S S   D E F E A T E D  ⚔"
+                            "[/bold green]\n\n"
+
+                            "[bold yellow]"
+                            "✦ +20 seconds"
+                            "[/bold yellow]\n"
+
+                            "[bold cyan]"
+                            "✦ +1 Arcana"
+                            "[/bold cyan]\n\n"
+
+                            f"[dim]"
+                            f"Arcana: {ARCANA}"
+                            f"[/dim]"
+                        ),
+                        border_style="green",
+                        expand=False,
+                        padding=(2, 8)
+                    ),
+                    refresh=True
+                )
+
+                time.sleep(1.5)
+
+                return True, time_limit
+
+            # ====================================================
+            # READ KEY
+            # ====================================================
+
+            if not msvcrt.kbhit():
+                time.sleep(0.05)
+                continue
+
+            key = readchar.readkey()
+
+            # ====================================================
+            # NUMBER
+            # ====================================================
+
+            if key.isdigit():
+
+                # -----------------------------------------------
+                # ONLY CURRENT QUESTION ACCEPTS INPUT
+                # -----------------------------------------------
+
+                boss_questions[current_question]["input"] += key
+
+            # ====================================================
+            # BACKSPACE
+            # ====================================================
+
+            elif key == readchar.key.BACKSPACE:
+
+                boss_questions[current_question]["input"] = (
+                    boss_questions[current_question]["input"][:-1]
+                )
+
+            # ====================================================
+            # SPACE = LOCK ANSWER
+            # ====================================================
+
+            elif key == " ":
+
+                answer_text = (
+                    boss_questions[current_question]["input"]
+                )
+
+                # ------------------------------------------------
+                # BLANK ANSWER
+                # ------------------------------------------------
+
+                if answer_text == "":
+
+                    continue
+
+                # ------------------------------------------------
+                # CHECK ANSWER
+                # ------------------------------------------------
+
+                try:
+
+                    player_answer = int(
+                        answer_text
+                    )
+
+                except ValueError:
+
+                    continue
+
+                correct_answer = (
+                    boss_questions[current_question]["answer"]
+                )
+
+                # =================================================
+                # CORRECT
+                # =================================================
+
+                if player_answer == correct_answer:
+
+                    boss_questions[current_question]["locked"] = True
+
+                    current_question += 1
+
+                    continue
+
+                # =================================================
+                # WRONG
+                # =================================================
+
+                else:
+
+                    # --------------------------------------------
+                    # SURVIVAL SIGIL
+                    # --------------------------------------------
+
+                    if ITEMS["survival_sigil"]["quantity"] > 0:
+
+                        ITEMS["survival_sigil"]["quantity"] -= 1
+
+                        console.clear()
+
+                        live.update(
+                            Panel(
+                                Align.center(
+                                    "[bold magenta]"
+                                    "🔮 SURVIVAL SIGIL ACTIVATED!"
+                                    "[/bold magenta]\n\n"
+
+                                    "[bold white]"
+                                    "The wrong answer has been forgiven!"
+                                    "[/bold white]\n\n"
+
+                                    f"Survival Sigils remaining: "
+                                    f"[bold magenta]"
+                                    f"{ITEMS['survival_sigil']['quantity']}"
+                                    f"[/bold magenta]"
+                                ),
+                                border_style="magenta",
+                                expand=False,
+                                padding=(2, 6)
+                            ),
+                            refresh=True
+                        )
+
+                        # ----------------------------------------
+                        # RESET CURRENT ANSWER
+                        # ----------------------------------------
+
+                        boss_questions[current_question][
+                            "input"
+                        ] = ""
+
+                        time.sleep(1)
+
+                        continue
+
+                    # --------------------------------------------
+                    # NO SIGIL
+                    # --------------------------------------------
+
+                    console.clear()
+
+                    console.print(
+                        Panel(
+                            Align.center(
+                                "[bold red]"
+                                "☠ BOSS BATTLE FAILED ☠"
+                                "[/bold red]\n\n"
+    
+                                "[white]"
+                                "Your answer was incorrect."
+                                "[/white]\n\n"
+    
+                                "[dim]"
+                                "The boss remains undefeated."
+                                "[/dim]"
+                            ),
+                            border_style="red",
+                            expand=False,
+                            padding=(2, 6)
+                        )
+                    )
+
+                time.sleep(1.5)
+
+                return False, time_limit
+
 
 # ============================================================
 # MAIN MENU
@@ -1116,6 +1598,16 @@ def main_menu():
         menu.add_row("[5]", "📜 CREDITS")
         menu.add_row("[6]", "🚪 EXIT")
 
+
+        menu_panel = Panel(
+            Align.center(menu),
+            title="[bold cyan]MAIN MENU[/bold cyan]",
+            border_style="cyan",
+            expand=False,
+            padding=(1, 4)
+        )
+
+
         console.print(
             Panel(
                 Align.center(menu),
@@ -1125,7 +1617,6 @@ def main_menu():
                 padding=(1, 4)
             )
         )
-
         choice = console.input(
             "\n[bold yellow]Choose your path › [/bold yellow]"
         )
@@ -1667,16 +2158,44 @@ def play():
                         )
                     )
 
-                    question_number += 1
+                    # ------------------------------------------------
+                    # QUESTIONS COMPLETED
+                    # ------------------------------------------------
 
-                    time.sleep(1)
+                    completed_questions = question_number
 
                     # ------------------------------------------------
                     # MILESTONE REWARD
                     # ------------------------------------------------
 
-                    if (question_number - 1) % 10 == 0:
+                    if completed_questions % 10 == 0:
                         choose_item_reward()
+
+                    # ------------------------------------------------
+                    # BOSS BATTLE
+                    # ------------------------------------------------
+
+                    if completed_questions % 30 == 0:
+
+                        boss_won, time_limit = boss_battle(time_limit)
+
+                        if not boss_won:
+                            player_name = get_player_name()
+
+                            save_score(
+                                player_name,
+                                completed_questions
+                            )
+
+                            high_scores()
+                            return
+                    # ------------------------------------------------
+                    # MOVE TO NEXT QUESTION
+                    # ------------------------------------------------
+
+                    question_number += 1
+
+                    time.sleep(1)
 
                     break
 
@@ -1739,7 +2258,7 @@ def play():
                         player_name,
                         question_number - 1
                     )
-
+                    high_scores()
                     return
             # ------------------------------------------------
             # TIMER EXPIRED
@@ -1796,33 +2315,8 @@ def play():
                     player_name,
                     question_number - 1
                 )
-
+                high_scores()
                 return
-
-
-# ============================================================
-# HIGH SCORES
-# ============================================================
-
-def high_scores():
-
-    console.clear()
-
-    console.print(
-        Panel(
-            Align.center(
-                "[bold yellow]🏆 HIGH SCORES[/bold yellow]\n\n"
-                "[dim]No scores recorded yet.[/dim]"
-            ),
-            border_style="yellow",
-            expand=False,
-            padding=(2, 6)
-        )
-    )
-
-    console.input(
-        "\nPress ENTER to return to the menu..."
-    )
 
 
 # ============================================================
@@ -1851,30 +2345,6 @@ def credits():
         "\n[dim]Press ENTER to return to the menu...[/dim]"
     )
 
-# ============================================================
-# SETTINGS
-# ============================================================
-
-def settings():
-
-    console.clear()
-
-    console.print(
-        Panel(
-            Align.center(
-                "[bold cyan]⚙  SETTINGS[/bold cyan]\n\n"
-                "[dim]Nothing to configure yet.[/dim]\n"
-                "[dim]The run determines its own difficulty.[/dim]"
-            ),
-            border_style="cyan",
-            expand=False,
-            padding=(2, 6)
-        )
-    )
-
-    console.input(
-        "\nPress ENTER to return to the menu..."
-    )
 
 # ======================================================
 # HIGH SCORES
@@ -1913,8 +2383,96 @@ def high_scores():
     )
 
 # ============================================================
+# REMOVE CURRENT PROFILE
+# ============================================================
+
+def delete_current_profile():
+
+    global CURRENT_PROFILE_ID
+    global CURRENT_PROFILE_NAME
+    global ARCANA
+
+    console.clear()
+
+    console.print(
+        Panel(
+            Align.center(
+                "[bold red]✦ REMOVE PROFILE ✦[/bold red]\n\n"
+                f"[bold white]{CURRENT_PROFILE_NAME}[/bold white]\n\n"
+                "[yellow]This will permanently delete this profile.[/yellow]\n"
+                "[dim]Arcana and permanent shop progress will be lost.[/dim]\n\n"
+                "[bold red]This action cannot be undone.[/bold red]"
+            ),
+            border_style="red",
+            expand=False,
+            padding=(2, 8)
+        )
+    )
+
+    choice = console.input(
+        "\n[bold yellow]Remove this profile? (Y/N) › [/bold yellow]"
+    ).strip().lower()
+
+    if choice != "y":
+
+        console.print(
+            "\n[bold cyan]✦ Profile removal cancelled.[/bold cyan]"
+        )
+
+        time.sleep(0.8)
+
+        return False
+
+    # --------------------------------------------------------
+    # DELETE FROM DATABASE
+    # --------------------------------------------------------
+
+    delete_profile(CURRENT_PROFILE_ID)
+
+    # --------------------------------------------------------
+    # CLEAR CURRENT PROFILE
+    # --------------------------------------------------------
+
+    CURRENT_PROFILE_ID = None
+    CURRENT_PROFILE_NAME = ""
+    ARCANA = 0
+
+    # --------------------------------------------------------
+    # RESET PERMANENT SHOP STATE
+    # --------------------------------------------------------
+
+    for item in SHOP_ITEMS.values():
+
+        item["owned"] = False
+
+    # --------------------------------------------------------
+    # CONFIRM DELETION
+    # --------------------------------------------------------
+
+    console.clear()
+
+    console.print(
+        Panel(
+            Align.center(
+                "[bold green]✦ PROFILE REMOVED ✦[/bold green]\n\n"
+                "[white]The profile has been permanently deleted.[/white]"
+            ),
+            border_style="green",
+            expand=False,
+            padding=(2, 8)
+        )
+    )
+
+    console.input(
+        "\n[dim]Press ENTER to continue...[/dim]"
+    )
+
+    return True
+
+# ============================================================
 # SETTINGS
-# ===========================================================
+# ============================================================
+
 def settings():
 
     while True:
@@ -1940,11 +2498,26 @@ def settings():
 
         settings_table.add_row(
             "[1]",
-            "Reset High Scores"
+            "Create Profile"
         )
 
         settings_table.add_row(
             "[2]",
+            "Change Profile"
+        )
+
+        settings_table.add_row(
+            "[3]",
+            "Remove Profile"
+        )
+
+        settings_table.add_row(
+            "[4]",
+            "Reset High Scores"
+        )
+
+        settings_table.add_row(
+            "[5]",
             "Back"
         )
 
@@ -1960,13 +2533,59 @@ def settings():
 
         choice = console.input(
             "\n[bold yellow]Choose an option › [/bold yellow]"
-        )
+        ).strip()
+
+        # ----------------------------------------------------
+        # CREATE PROFILE
+        # ----------------------------------------------------
 
         if choice == "1":
 
-            reset_high_scores_confirmation()
+            create_save_state(from_settings=True)
+
+            # Return to main menu after creating profile
+            break
+
+        # ----------------------------------------------------
+        # CHANGE PROFILE
+        # ----------------------------------------------------
 
         elif choice == "2":
+
+            if load_save_state():
+
+                # Return to main menu after changing profile
+                break
+
+        # ----------------------------------------------------
+        # REMOVE PROFILE
+        # ----------------------------------------------------
+
+        elif choice == "3":
+
+            if delete_current_profile():
+
+                # No active profile remains.
+                # Send player back to profile selection.
+                save_state_screen()
+
+                # After creating/loading a new profile,
+                # return to the main menu.
+                break
+
+        # ----------------------------------------------------
+        # RESET HIGH SCORES
+        # ----------------------------------------------------
+
+        elif choice == "4":
+
+            reset_high_scores_confirmation()
+
+        # ----------------------------------------------------
+        # BACK
+        # ----------------------------------------------------
+
+        elif choice == "5":
 
             break
 
@@ -1980,7 +2599,41 @@ def settings():
                 "\nPress ENTER to continue..."
             )
 
-# ===========================================================
+# ============================================================
+# DELETE PROFILE
+# ============================================================
+
+def delete_profile_confirmation():
+
+    console.clear()
+
+    console.print(
+        Panel(
+            Align.center(
+                "[bold red]✦ DELETE PROFILE ✦[/bold red]\n\n"
+                f"[bold white]{CURRENT_PROFILE_NAME}[/bold white]\n\n"
+                "[yellow]This will permanently delete this profile.[/yellow]\n"
+                "[dim]Arcana and permanent shop progress will be lost.[/dim]\n\n"
+                "[bold red]Are you absolutely sure?[/bold red]"
+            ),
+            border_style="red",
+            expand=False,
+            padding=(2, 8)
+        )
+    )
+
+    choice = console.input(
+        "\n[bold yellow]Delete this profile? [Y/N] › [/bold yellow]"
+    ).strip().lower()
+
+    if choice != "y":
+        console.print(
+            "\n[bold cyan]✦ Profile deletion cancelled.[/bold cyan]"
+        )
+        time.sleep(1)
+        return
+
+# =================================================
 # RESET HIGH SCORES
 # ===========================================================
 def reset_high_scores_confirmation():
@@ -2071,4 +2724,6 @@ def show_inventory():
 # ============================================================
 # START GAME
 # ============================================================
+create_table()
+save_state_screen()
 main_menu()
