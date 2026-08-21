@@ -323,7 +323,7 @@ Python's built-in `msvcrt` module.
 Clone the repository and move into the project directory:
 
 ```bash
-git clone git clone https://github.com/beo-wu1f/Arithomancer.git
+git clone https://github.com/beo-wu1f/Arithomancer.git
 cd Arithomancer
 ```
 
