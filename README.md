@@ -788,6 +788,12 @@ proud of.
 
 ---
 
+Author
+
+Rishi Kant
+
+https://github.com/beo-wu1f
+
 ## 📜 LICENSE
 
 This project is available under the **MIT License**.
